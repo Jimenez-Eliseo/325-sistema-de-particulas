@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Sistema de Partículas WebGL 2.0</title>
+    <meta charset="UTF-8" />
+    <style>
+      canvas {
+        border: 1px solid black;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Sistema de Partículas en WebGL 2.0</h2>
+    <button id="cambiarColor">Activar/Desactivar Azul</button>
+    <button id="aumentarVelocidad">Aumentar Velocidad</button>
+    <button id="disminuirVelocidad">Disminuir Velocidad</button>
+    <br /><br />
+    <canvas id="webglcanvas" width="500" height="500"></canvas>
+
+    <script id="vs" type="x-shader/x-vertex">
+      #version 300 es
+      precision mediump float;
+      layout(location = 0) in vec2 aVertices;
+      uniform mat4 uMatrizProyeccion;
+      uniform mat4 uMatrizVista;
+      uniform mat4 uMatrizModelo;
+      void main() {
+        gl_Position = uMatrizProyeccion * uMatrizVista * uMatrizModelo * vec4(aVertices, 0.0, 1.0);
+      }
+    </script>
+
+    <script id="fs" type="x-shader/x-fragment">
+      #version 300 es
+      precision mediump float;
+      uniform vec4 uColor;
+      out vec4 color;
+      void main() {
+        color = uColor;
+      }
+    </script>
+
+    <script>
+      "use strict";
+
+      let gl, programaID;
+      let uMatrizProyeccion, uMatrizVista, uMatrizModelo, uColor;
+      let MatrizProyeccion = new Float32Array(16);
+      let MatrizVista = new Float32Array(16);
+      let MatrizModelo = new Float32Array(16);
+      let velocidadEscala = 1;
+      let usarColorAzul = false;
+
+      class Circulo {
+        constructor(gl, radio) {
+          this.vertexCount = 360;
+          let vertices = [];
+          for (let i = 0; i < this.vertexCount; i++) {
+            let angle = (i * Math.PI) / 180;
+            vertices.push(radio * Math.cos(angle));
+            vertices.push(radio * Math.sin(angle));
+          }
+          this.vao = gl.createVertexArray();
+          gl.bindVertexArray(this.vao);
+          let vbo = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+          gl.bufferData(
+            gl.ARRAY_BUFFER,
+            new Float32Array(vertices),
+            gl.STATIC_DRAW
+          );
+          gl.enableVertexAttribArray(0);
+          gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+          gl.bindVertexArray(null);
+        }
+
+        dibuja(gl) {
+          gl.bindVertexArray(this.vao);
+          gl.drawArrays(gl.TRIANGLE_FAN, 0, this.vertexCount);
+          gl.bindVertexArray(null);
+        }
+      }
+
+      class Particula {
+        constructor(x, y, vx, vy) {
+          this.x = x;
+          this.y = y;
+          this.vx = vx;
+          this.vy = vy;
+        }
+
+        actualizar() {
+          this.x += this.vx * velocidadEscala;
+          this.y += this.vy * velocidadEscala;
+          if (this.x > 5 || this.x < -5) this.vx *= -1;
+          if (this.y > 5 || this.y < -5) this.vy *= -1;
+        }
+      }
+
+      function identidad(m) {
+        m.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      }
+
+      function traslacion(m, tx, ty, tz) {
+        identidad(m);
+        m[12] = tx;
+        m[13] = ty;
+        m[14] = tz;
+      }
+
+      function ortho(r, izq, der, abj, arr, cerca, lejos) {
+        r.set([
+          2 / (der - izq),
+          0,
+          0,
+          0,
+          0,
+          2 / (arr - abj),
+          0,
+          0,
+          0,
+          0,
+          -2 / (lejos - cerca),
+          0,
+          -(der + izq) / (der - izq),
+          -(arr + abj) / (arr - abj),
+          -(lejos + cerca) / (lejos - cerca),
+          1,
+        ]);
+      }
+
+      let circulo;
+      let particulas = [];
+
+      function compilaEnlazaLosShaders() {
+        let vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, document.getElementById("vs").text.trim());
+        gl.compileShader(vs);
+        if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(vs));
+        }
+
+        let fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, document.getElementById("fs").text.trim());
+        gl.compileShader(fs);
+        if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(fs));
+        }
+
+        programaID = gl.createProgram();
+        gl.attachShader(programaID, vs);
+        gl.attachShader(programaID, fs);
+        gl.linkProgram(programaID);
+        if (!gl.getProgramParameter(programaID, gl.LINK_STATUS)) {
+          console.error(gl.getProgramInfoLog(programaID));
+        }
+
+        gl.useProgram(programaID);
+      }
+
+      function main() {
+        let canvas = document.getElementById("webglcanvas");
+        gl = canvas.getContext("webgl2");
+        if (!gl) {
+          alert("WebGL 2 no está disponible");
+          return;
+        }
+
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        compilaEnlazaLosShaders();
+
+        uMatrizProyeccion = gl.getUniformLocation(
+          programaID,
+          "uMatrizProyeccion"
+        );
+        uMatrizVista = gl.getUniformLocation(programaID, "uMatrizVista");
+        uMatrizModelo = gl.getUniformLocation(programaID, "uMatrizModelo");
+        uColor = gl.getUniformLocation(programaID, "uColor");
+
+        ortho(MatrizProyeccion, -5, 5, -5, 5, -1, 1);
+        gl.uniformMatrix4fv(uMatrizProyeccion, false, MatrizProyeccion);
+        identidad(MatrizVista);
+        gl.uniformMatrix4fv(uMatrizVista, false, MatrizVista);
+
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+        circulo = new Circulo(gl, 0.1);
+
+        for (let i = 0; i < 100; i++) {
+          let x = (Math.random() - 0.5) * 10;
+          let y = (Math.random() - 0.5) * 10;
+          let vx = (Math.random() - 0.5) * 0.05;
+          let vy = (Math.random() - 0.5) * 0.05;
+
+          // Evitar que se queden quietas (mínima velocidad)
+          if (Math.abs(vx) < 0.005) vx = 0.005 * Math.sign(vx || 1);
+          if (Math.abs(vy) < 0.005) vy = 0.005 * Math.sign(vy || 1);
+
+          particulas.push(new Particula(x, y, vx, vy));
+        }
+
+        document
+          .getElementById("cambiarColor")
+          .addEventListener("click", () => {
+            usarColorAzul = !usarColorAzul;
+          });
+
+        document
+          .getElementById("aumentarVelocidad")
+          .addEventListener("click", () => {
+            velocidadEscala *= 1.2;
+          });
+
+        document
+          .getElementById("disminuirVelocidad")
+          .addEventListener("click", () => {
+            velocidadEscala *= 0.8;
+          });
+
+        requestAnimationFrame(dibuja);
+      }
+
+      function dibuja() {
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        for (let p of particulas) {
+          p.actualizar();
+          traslacion(MatrizModelo, p.x, p.y, 0);
+          gl.uniformMatrix4fv(uMatrizModelo, false, MatrizModelo);
+          if (usarColorAzul) {
+            gl.uniform4fv(uColor, [0.0, 0.5, 1.0, 1.0]); // Azul medio
+          } else {
+            gl.uniform4fv(uColor, [1.0, 1.0, 1.0, 1.0]); // Blanco
+          }
+          circulo.dibuja(gl);
+        }
+        requestAnimationFrame(dibuja);
+      }
+
+      window.onload = main;
+    </script>
+  </body>
+</html>
